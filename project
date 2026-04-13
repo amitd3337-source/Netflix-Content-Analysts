@@ -1,0 +1,441 @@
+import os
+import zipfile
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from matplotlib.ticker import MaxNLocator
+
+# ──────────────────────────────────────────────
+# 1.  LOAD DATA
+# ──────────────────────────────────────────────
+
+def load_netflix_data():
+    """
+    Try to load data from:
+      1. netflix_titles.csv.zip
+      2. netflix_titles.csv
+      3. auto-generate synthetic sample data (fallback)
+    """
+    # Use os.getcwd() instead of __file__ for Colab compatibility
+    base_dir = os.getcwd()
+
+    zip_path = os.path.join(base_dir, "netflix_titles.csv.zip")
+    csv_path = os.path.join(base_dir, "netflix_titles.csv")
+
+    if os.path.exists(zip_path):
+        print(f"[INFO] Loading from ZIP: {zip_path}")
+        with zipfile.ZipFile(zip_path, "r") as z:
+            # pick the first csv inside the archive
+            csv_names = [n for n in z.namelist() if n.endswith(".csv")]
+            if not csv_names:
+                raise FileNotFoundError("No CSV found inside the ZIP file.")
+            with z.open(csv_names[0]) as f:
+                df = pd.read_csv(f)
+        return df
+
+    if os.path.exists(csv_path):
+        print(f"[INFO] Loading from CSV: {csv_path}")
+        return pd.read_csv(csv_path)
+
+    # ── Fallback: synthetic data ──────────────────────────────────────────
+    print("[WARN] netflix_titles.csv(.zip) not found – using synthetic sample data.")
+    np.random.seed(42)
+    n = 8000
+
+    countries = ["United States", "India", "United Kingdom", "Japan", "South Korea",
+                 "Canada", "France", "Spain", "Germany", "Mexico",
+                 "Australia", "Brazil", "Turkey", "Nigeria", "Egypt"]
+
+    types   = np.random.choice(["Movie", "TV Show"], size=n, p=[0.70, 0.30])
+    ratings = np.random.choice(
+        ["TV-MA", "TV-14", "TV-PG", "R", "PG-13", "PG", "G", "NR", "TV-G", "TV-Y7"],
+        size=n,
+        p=[0.30, 0.22, 0.10, 0.14, 0.08, 0.06, 0.03, 0.03, 0.02, 0.02]
+    )
+    # 22 years: 2000-2021  →  probabilities must sum to 1.0
+    _p = [0.01, 0.01, 0.01, 0.01, 0.01,
+           0.02, 0.02, 0.02, 0.02, 0.02, 0.02,
+           0.03, 0.03, 0.04, 0.05,
+           0.07, 0.08, 0.09, 0.10, 0.11, 0.12, 0.10]
+    _p = [x / sum(_p) for x in _p]          # normalise to exactly 1.0
+    release_years = np.random.choice(range(2000, 2022), size=n, p=_p)
+    country_list = np.random.choice(countries, size=n,
+                                    p=[0.35, 0.18, 0.08, 0.07, 0.06,
+                                       0.05, 0.04, 0.03, 0.03, 0.03,
+                                       0.02, 0.02, 0.01, 0.01, 0.02])
+
+    # generate genre-like listed_in
+    genres = ["Dramas", "Comedies", "Action & Adventure", "Documentaries",
+              "Children & Family", "Horror Movies", "Thrillers", "Stand-Up Comedy",
+              "International TV", "Crime TV"]
+    listed_in = np.random.choice(genres, size=n)
+
+    df = pd.DataFrame({
+        "type":         types,
+        "title":        [f"Title {i}" for i in range(n)],
+        "country":      country_list,
+        "release_year": release_years,
+        "rating":       ratings,
+        "listed_in":    listed_in,
+    })
+    return df
+
+
+# ──────────────────────────────────────────────
+# 2.  PREPROCESS
+# ──────────────────────────────────────────────
+
+def preprocess(df: pd.DataFrame) -> pd.DataFrame:
+    # drop rows where critical columns are missing
+    df = df.dropna(subset=["type"])
+
+    # some entries have multiple countries separated by ', '
+    if "country" in df.columns:
+        df = df.copy()
+        df["country"] = df["country"].fillna("Unknown")
+        # explode to one country per row for country-level analysis
+        df["country_primary"] = df["country"].str.split(",").str[0].str.strip()
+    else:
+        df["country_primary"] = "Unknown"
+
+    if "release_year" in df.columns:
+        df["release_year"] = pd.to_numeric(df["release_year"], errors="coerce")
+
+    if "rating" in df.columns:
+        df["rating"] = df["rating"].fillna("NR")
+
+    return df
+
+
+# ──────────────────────────────────────────────
+# 3.  COLOUR PALETTE
+# ──────────────────────────────────────────────
+
+NETFLIX_RED   = "#E50914"
+DARK_BG       = "#141414"
+CARD_BG       = "#1F1F1F"
+TEXT_WHITE    = "#FFFFFF"
+TEXT_GREY     = "#AAAAAA"
+ACCENT_GOLD   = "#F5C518"
+
+PALETTE = [
+    "#E50914", "#F5C518", "#46D369", "#00B4D8",
+    "#FF6B6B", "#C77DFF", "#4CC9F0", "#F77F00",
+    "#06D6A0", "#EF476F"
+]
+
+def apply_dark_theme():
+    plt.rcParams.update({
+        "figure.facecolor":  DARK_BG,
+        "axes.facecolor":    CARD_BG,
+        "axes.edgecolor":    "#333333",
+        "axes.labelcolor":   TEXT_WHITE,
+        "axes.titlecolor":   TEXT_WHITE,
+        "xtick.color":       TEXT_GREY,
+        "ytick.color":       TEXT_GREY,
+        "text.color":        TEXT_WHITE,
+        "grid.color":        "#2A2A2A",
+        "grid.linestyle":    "--",
+        "grid.linewidth":    0.6,
+        "font.family":       "DejaVu Sans",
+        "font.size":         10,
+        "axes.titlesize":    13,
+        "axes.labelsize":    11,
+        "legend.facecolor":  CARD_BG,
+        "legend.edgecolor":  "#333333",
+        "legend.labelcolor": TEXT_WHITE,
+    })
+
+
+# ──────────────────────────────────────────────
+# 4.  INDIVIDUAL PLOTS
+# ──────────────────────────────────────────────
+
+# ── 4-A  Top 10 Countries (bar) ───────────────────────────────────────────────
+def plot_top10_countries(ax, df):
+    top10 = (df["country_primary"]
+             .value_counts()
+             .head(10)
+             .sort_values(ascending=True))
+
+    colors = PALETTE[:len(top10)]
+    bars = ax.barh(top10.index, top10.values, color=colors, edgecolor="none", height=0.65)
+
+    for bar, val in zip(bars, top10.values):
+        ax.text(val + top10.values.max() * 0.01, bar.get_y() + bar.get_height() / 2,
+                f"{val:,}", va="center", ha="left", fontsize=9, color=TEXT_WHITE)
+
+    ax.set_title("🌍  Top 10 Countries by Content Count", pad=12, fontweight="bold")
+    ax.set_xlabel("Number of Titles")
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.grid(axis="x", alpha=0.4)
+    ax.spines[["top", "right", "bottom"]].set_visible(False)
+
+
+# ── 4-B  Content Type Pie ─────────────────────────────────────────────────────
+def plot_content_type_pie(ax, df):
+    counts = df["type"].value_counts()
+    explode = [0.05] * len(counts)
+
+    wedges, texts, autotexts = ax.pie(
+        counts.values,
+        labels=counts.index,
+        autopct="%1.1f%%",
+        startangle=140,
+        colors=[NETFLIX_RED, "#00B4D8"],
+        explode=explode,
+        wedgeprops={"edgecolor": DARK_BG, "linewidth": 2},
+        textprops={"color": TEXT_WHITE, "fontsize": 11},
+    )
+    for at in autotexts:
+        at.set_fontsize(10)
+        at.set_color(TEXT_WHITE)
+        at.set_fontweight("bold")
+
+    ax.set_title("🎬  Content Type Distribution", pad=12, fontweight="bold")
+
+
+# ── 4-C  Movies vs TV Shows Bar ──────────────────────────────────────────────
+def plot_movies_vs_tvshows(ax, df):
+    counts = df["type"].value_counts()
+    x = np.arange(len(counts))
+    bar_colors = [NETFLIX_RED, "#00B4D8"]
+
+    bars = ax.bar(counts.index, counts.values, color=bar_colors,
+                  edgecolor="none", width=0.5)
+
+    for bar in bars:
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width() / 2, height + counts.values.max() * 0.01,
+                f"{height:,}", ha="center", va="bottom", fontweight="bold",
+                fontsize=11, color=TEXT_WHITE)
+
+    ax.set_title("🎞️  Movies vs TV Shows", pad=12, fontweight="bold")
+    ax.set_ylabel("Number of Titles")
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.grid(axis="y", alpha=0.4)
+    ax.spines[["top", "right", "left"]].set_visible(False)
+
+
+# ── 4-D  Content Rating Pie ───────────────────────────────────────────────────
+def plot_rating_pie(ax, df):
+    if "rating" not in df.columns:
+        ax.text(0.5, 0.5, "No rating column found", ha="center", va="center")
+        return
+
+    top_ratings = df["rating"].value_counts().head(8)
+    explode = [0.04] * len(top_ratings)
+
+    wedges, texts, autotexts = ax.pie(
+        top_ratings.values,
+        labels=top_ratings.index,
+        autopct="%1.1f%%",
+        startangle=90,
+        colors=PALETTE[:len(top_ratings)],
+        explode=explode,
+        wedgeprops={"edgecolor": DARK_BG, "linewidth": 1.5},
+        textprops={"color": TEXT_WHITE, "fontsize": 9},
+        pctdistance=0.78,
+    )
+    for at in autotexts:
+        at.set_fontsize(8)
+        at.set_fontweight("bold")
+
+    ax.set_title("🔞  Content Rating Percentage", pad=12, fontweight="bold")
+
+
+# ── 4-E  Release Year vs Number of Shows (scatter) ───────────────────────────
+def plot_release_year_scatter(ax, df):
+    year_counts = (df.groupby(["release_year", "type"])
+                   .size()
+                   .reset_index(name="count"))
+
+    for i, t in enumerate(["Movie", "TV Show"]):
+        sub = year_counts[year_counts["type"] == t]
+        ax.scatter(sub["release_year"], sub["count"],
+                   color=PALETTE[i], alpha=0.75, s=60, label=t,
+                   edgecolors="none", zorder=3)
+
+    ax.set_title("📅  Release Year vs Number of Titles (Scatter)", pad=12, fontweight="bold")
+    ax.set_xlabel("Release Year")
+    ax.set_ylabel("Number of Titles")
+    ax.legend(loc="upper left")
+    ax.grid(alpha=0.3)
+    ax.spines[["top", "right"]].set_visible(False)
+
+
+# ── 4-F  Release Year Histogram ──────────────────────────────────────────────
+def plot_release_year_hist(ax, df):
+    movies  = df[df["type"] == "Movie"]["release_year"].dropna()
+    tvshows = df[df["type"] == "TV Show"]["release_year"].dropna()
+
+    bins = range(int(df["release_year"].min()), int(df["release_year"].max()) + 2)
+
+    ax.hist(movies,  bins=bins, color=NETFLIX_RED,   alpha=0.75, label="Movie",   edgecolor="none")
+    ax.hist(tvshows, bins=bins, color="#00B4D8", alpha=0.75, label="TV Show", edgecolor="none")
+
+    ax.set_title("📊  Distribution of Release Years (Histogram)", pad=12, fontweight="bold")
+    ax.set_xlabel("Release Year")
+    ax.set_ylabel("Number of Titles")
+    ax.legend()
+    ax.grid(axis="y", alpha=0.4)
+    ax.spines[["top", "right"]].set_visible(False)
+
+
+# ── 4-G  Movies vs TV Shows over years (plt.plot) ────────────────────────────
+def plot_movies_vs_tvshows_line(ax, df):
+    year_type = (df.groupby(["release_year", "type"])
+                 .size()
+                 .unstack(fill_value=0)
+                 .reset_index())
+
+    years = year_type["release_year"].values
+
+    for col, color in zip(["Movie", "TV Show"], [NETFLIX_RED, "#00B4D8"]):
+        if col in year_type.columns:
+            ax.plot(years, year_type[col].values,
+                    color=color, linewidth=2.2, label=col, marker="o",
+                    markersize=4, alpha=0.9)
+            ax.fill_between(years, year_type[col].values, alpha=0.12, color=color)
+
+    ax.set_title("📈  Movies vs TV Shows Over Years (Line)", pad=12, fontweight="bold")
+    ax.set_xlabel("Release Year")
+    ax.set_ylabel("Number of Titles")
+    ax.legend()
+    ax.grid(alpha=0.35)
+    ax.spines[["top", "right"]].set_visible(False)
+
+
+# ──────────────────────────────────────────────
+# 5.  COMBINED DASHBOARD (all 7 plots)
+# ──────────────────────────────────────────────
+
+def build_dashboard(df):
+    apply_dark_theme()
+
+    fig = plt.figure(figsize=(22, 26), facecolor=DARK_BG)
+    fig.suptitle(
+        "🎬  N E T F L I X   C O N T E N T   A N A L Y T I C S",
+        fontsize=22, fontweight="bold", color=NETFLIX_RED,
+        y=0.98, va="top"
+    )
+
+    gs = gridspec.GridSpec(
+        4, 2,
+        figure=fig,
+        hspace=0.55,
+        wspace=0.35,
+        top=0.94, bottom=0.04,
+        left=0.07, right=0.97
+    )
+
+    ax1 = fig.add_subplot(gs[0, :])        # full row  – top 10 countries
+    ax2 = fig.add_subplot(gs[1, 0])        # pie – content type
+    ax3 = fig.add_subplot(gs[1, 1])        # bar – movies vs tv
+    ax4 = fig.add_subplot(gs[2, 0])        # pie – ratings
+    ax5 = fig.add_subplot(gs[2, 1])        # scatter – year vs count
+    ax6 = fig.add_subplot(gs[3, 0])        # hist – release years
+    ax7 = fig.add_subplot(gs[3, 1])        # line – movies vs tv over years
+
+    plot_top10_countries(ax1, df)
+    plot_content_type_pie(ax2, df)
+    plot_movies_vs_tvshows(ax3, df)
+    plot_rating_pie(ax4, df)
+    plot_release_year_scatter(ax5, df)
+    plot_release_year_hist(ax6, df)
+    plot_movies_vs_tvshows_line(ax7, df)
+
+    return fig
+
+
+# ──────────────────────────────────────────────
+# 6.  INDIVIDUAL FIGURE WINDOWS
+# ──────────────────────────────────────────────
+
+def show_individual_plots(df):
+    """Show each visualization in its own window."""
+    apply_dark_theme()
+
+    # -- 1. Top 10 countries
+    fig, ax = plt.subplots(figsize=(12, 6), facecolor=DARK_BG)
+    plot_top10_countries(ax, df)
+    plt.tight_layout()
+    plt.savefig("plot_1_top10_countries.png", dpi=150, bbox_inches="tight",
+                facecolor=DARK_BG)
+    print("[SAVED] plot_1_top10_countries.png")
+
+    # -- 2. Content type pie
+    fig, ax = plt.subplots(figsize=(7, 7), facecolor=DARK_BG)
+    plot_content_type_pie(ax, df)
+    plt.tight_layout()
+    plt.savefig("plot_2_content_type_pie.png", dpi=150, bbox_inches="tight",
+                facecolor=DARK_BG)
+    print("[SAVED] plot_2_content_type_pie.png")
+
+    # -- 3. Movies vs TV Shows bar
+    fig, ax = plt.subplots(figsize=(7, 6), facecolor=DARK_BG)
+    plot_movies_vs_tvshows(ax, df)
+    plt.tight_layout()
+    plt.savefig("plot_3_movies_vs_tvshows_bar.png", dpi=150, bbox_inches="tight",
+                facecolor=DARK_BG)
+    print("[SAVED] plot_3_movies_vs_tvshows_bar.png")
+
+    # -- 4. Rating pie
+    fig, ax = plt.subplots(figsize=(8, 8), facecolor=DARK_BG)
+    plot_rating_pie(ax, df)
+    plt.tight_layout()
+    plt.savefig("plot_4_rating_pie.png", dpi=150, bbox_inches="tight",
+                facecolor=DARK_BG)
+    print("[SAVED] plot_4_rating_pie.png")
+
+    # -- 5. Scatter – release year vs count
+    fig, ax = plt.subplots(figsize=(10, 6), facecolor=DARK_BG)
+    plot_release_year_scatter(ax, df)
+    plt.tight_layout()
+    plt.savefig("plot_5_scatter_year_count.png", dpi=150, bbox_inches="tight",
+                facecolor=DARK_BG)
+    print("[SAVED] plot_5_scatter_year_count.png")
+
+    # -- 6. Histogram – release years
+    fig, ax = plt.subplots(figsize=(11, 6), facecolor=DARK_BG)
+    plot_release_year_hist(ax, df)
+    plt.tight_layout()
+    plt.savefig("plot_6_hist_release_years.png", dpi=150, bbox_inches="tight",
+                facecolor=DARK_BG)
+    print("[SAVED] plot_6_hist_release_years.png")
+
+    # -- 7. Line – movies vs TV shows over years
+    fig, ax = plt.subplots(figsize=(11, 6), facecolor=DARK_BG)
+    plot_movies_vs_tvshows_line(ax, df)
+    plt.tight_layout()
+    plt.savefig("plot_7_line_movies_vs_tvshows.png", dpi=150, bbox_inches="tight",
+                facecolor=DARK_BG)
+    print("[SAVED] plot_7_line_movies_vs_tvshows.png")
+
+
+# ──────────────────────────────────────────────
+# 7.  MAIN
+# ──────────────────────────────────────────────
+
+if __name__ == "__main__":
+    # Load & preprocess
+    df = load_netflix_data()
+    df = preprocess(df)
+
+    print(f"\n[INFO] Dataset shape : {df.shape}")
+    print(f"[INFO] Content types : {df['type'].value_counts().to_dict()}")
+    print(f"[INFO] Year range    : {int(df['release_year'].min())} – {int(df['release_year'].max())}")
+    print()
+
+    # ── Option A: single combined dashboard window ──
+    fig = build_dashboard(df)
+    fig.savefig("netflix_dashboard.png", dpi=150, bbox_inches="tight",
+                facecolor=DARK_BG)
+    print("[SAVED] netflix_dashboard.png  (combined dashboard)")
+
+    # ── Option B: individual plots saved separately ──
+    show_individual_plots(df)
+
+    plt.show()
+    print("\n✅  All visualizations complete!")
